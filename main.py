@@ -1,4 +1,5 @@
 import chess
+import chess.svg
 import praw
 import json
 import random
@@ -7,7 +8,12 @@ import sys
 import requests as req
 import time
 import lichess
+import base64
+import re
 from bs4 import BeautifulSoup
+from wand.api import library
+import wand.color
+import wand.image
 
 class Opening:
     def __init__(self):
@@ -49,19 +55,23 @@ def get_text(file):
     firstheadline = ""
     headline = "First"
     started = False
-    started_idx = i
+    started_idx = 0
     ff = open(file, 'r', encoding='utf-8')
     lines = ff.readlines()
     ff.close()
     fulltext = ""
     lastline = ""
+    i = 0
     for line in lines:
+        i += 1
         textline = ''
         try:
             soup = BeautifulSoup(line)
             textline = soup.get_text()
         except:
             textline = line
+        if textline == '':
+            textline = re.sub('<[^<]+?>', '', line)
         if "When contributing to this" in line: continue
         if "Theory_table" in headline or "Theory_Table" in headline or "theory table" in headline.lower() or "Statistics" in headline or "References" in headline: break
         if "</div></div></div>" in line or "<h1><span id=" in line:
@@ -70,17 +80,19 @@ def get_text(file):
         if "span class=\"mw-headline\"" in line:
             headline = line.split("id=\"")[1].split("\"")[0].replace("_"," ")
             if "Theory_table" in headline or "Theory_Table" in headline or "Statistics" in headline or "References" in headline: break
+            if "Theory_table" in headline or "Theory_Table" in headline or "theory table" in headline.lower() or "Statistics" in headline or "References" in headline: break
             fulltext += "\n\n**" + headline.replace("\n","").replace("\r","") + "**" + "\n\n"
             started_idx = i
             if firstheadline == "":
                 firstheadline = headline
         if not started: continue
         else:
-            if ("<p><br />" in lastline and headline == "First") or headline != "":
+            #if ("<p><br />" in lastline and headline == "First") or headline != "":
+            if "<p>" in line or "</li>" in line or "<dd>" in line:
                 if i - started_idx < 100:
                     if "Contents" not in textline:
-                        if textline.split(" ")[0].replace(".","").isnumeric(): continue
-                        fulltext += textline.replace("\n\n","")
+                        #if textline.split(" ")[0].replace(".","").isnumeric(): continue
+                        fulltext += textline.replace("\n\n","") + "\n"
         lastline = line
     return fulltext
 
@@ -321,6 +333,37 @@ def post_weekly_thread(reddit, valid_openings):
         print("Weekly theme finished. Posting new weekly opening.")
         new_weekly_opening(reddit, valid_openings)
         return None
+    filename = "chessopeningtheory" + lines[0].replace("\n","") + "\\index.html"
+    text = get_text(filename)
+    count = 0
+    is_valid = False
+    for line in text.split("\n"):
+        if "Moves:" in line: continue
+        if len(line) < 1: continue
+        if "parent:" in line.lower(): continue
+        if "eco code:" in line.lower(): continue
+        if "notation" in line.lower(): continue
+        if "moves:" in line.lower(): continue
+        if "**" in line.lower(): continue
+        if "wikipedia" in line.lower(): continue
+        count += len(line)
+        is_valid = True
+    if count < 120: is_valid = False
+    if not is_valid:
+        # remove 1st opening
+        i = 0
+        ff = open('weekly_to_post.txt', 'w')
+        for line in lines:
+            line = line.replace("\n", "")
+            if i == 0:
+                i += 1
+                continue
+            ff.write(line + "\n")
+            i += 1
+        ff.close()
+        # try again
+        post_weekly_thread(reddit, valid_openings)
+        return
     opening = lines[0].replace("\n","")
     post_thread(reddit, opening, valid_openings, "weekly")
     i = 0
@@ -414,7 +457,7 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
         root_line = lines[0]
         root_line = root_line.replace("_", " ")
         for move in root_line.split("\\"):
-            print(move)
+     #       print(move)
             if "..." in move:
                 move = move.split("...")[1]
             new_root_line += move + " "
@@ -440,17 +483,45 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
         title = "[Random] " + opening.line + " (" + name + ")"
     selftext += "Opening line: " + opening.line + "\n\n"
     selftext += "Opening name: " + name + "\n\n"
+    selftext += "Board image: " + get_imgur_link(opening.line) + "\n\n"
     selftext += "Lichess board: " + opening.lichess + "\n\n"
     selftext += "Wikibooks page: " + opening.wiki + "\n\n"
     selftext += "---\n\n"
+
+    # winning chances #
+
+    board = chess.Board()
+    for move in opening.line.split(" "):
+        if "." in move: continue
+        if move == "": continue
+        board.push_san(move)
+    #print(opening.line)
+    fen = board.fen()
+
+    info = get_opening_info_lichess(fen)
+    white_wins = str(info['white'])
+    black_wins = str(info['black'])
+    draws = str(info['draws'])
+    tot_games = int(white_wins) + int(black_wins) + int(draws)
+    white_percent = round(int(white_wins) * 100 / int(tot_games),2)
+    black_percent = round(int(black_wins) * 100 / int(tot_games), 2)
+    draws_percent = round(int(draws) * 100 / int(tot_games), 2)
+    selftext += "Winning percenatages:\n\n"
+    selftext += "White: " + str(white_wins) + " (" + str(white_percent) + "%)\n\n"
+    selftext += "Black: " + str(black_wins) + " (" + str(black_percent) + "%)\n\n"
+    selftext += "Draws: " + str(draws) + " (" + str(draws_percent) + "%)\n\n"
+    selftext += "---\n\n"
+    print(opening.text)
     propertext = ''
     for line in opening.text.split("\n"):
+        if line.lower().split(" ")[0].replace(".","").isnumeric(): continue
         if "theory table" in line.lower(): break
         if "footnotes" in line.lower(): break
         if "newpp" in line.lower(): break
-        if len(line.replace("\n","")) == 1: break
+        if len(line.replace("\n","")) == 1 and ((line.replace("\n","") >= 'a' and line.replace('\n','') <= 'z') or line.replace("\n","").isnumeric): break
         propertext += line + "\n"
     propertext = propertext.replace("[edit]","")
+  #  print(propertext)
     is_empty = True
     actual_len = 0
     for line in propertext.split("\n"):
@@ -460,8 +531,10 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
         if "moves:" in line.lower(): continue
         if "**" in line.lower(): continue
         if "wikipedia" in line.lower(): continue
+    #    print(line, actual_len)
         actual_len += len(line)
         is_empty = False
+   # print("---", actual_len, is_empty)
     if actual_len < 100: is_empty = True
     if is_empty:
         selftext = ""
@@ -472,6 +545,8 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     #if not is_valid:
      #   selftext = ""
       #  continue
+  #  print(propertext)
+    #print(propertext)
     if len(propertext) < 5: return None
     selftext += propertext
     selftext += "\n\n---\n\n"
@@ -493,100 +568,152 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     return valid_openings
     pass
 
-#authenticate
-credentials = 'client_secrets.json'
-with open(credentials) as f:
-    creds = json.load(f)
+def get_imgur_link(opening):
+    board = chess.Board()
+    for move in opening.replace(" ", "\\").split("\\"):
+        if "..." in move: move = move.split("...")[1]
+        if "." in move: move = move.split(".")[1]
+        if move == "": continue
+        board.push_san(move)
+    svg = chess.svg.board(board)
+    with wand.image.Image() as image:
+        with wand.color.Color('transparent') as background_color:
+            library.MagickSetBackgroundColor(image.wand,
+                                             background_color.resource)
+        image.read(blob=svg.encode('utf-8'), format="svg")
+        png_image = image.make_blob("png32")
+    with open('image.png', "wb") as out:
+        out.write(png_image)
+    client_id = 'xxx'
 
-reddit = praw.Reddit(client_id=creds['client_id'],
-                     client_secret=creds['client_secret'],
-                     user_agent=creds['user_agent'],
-                     redirect_uri=creds['redirect_uri'],
-                     refresh_token=creds['refresh_token'])
-board = chess.Board()
-already_posted = []
-ff = open('posted.txt','r')
-lines = ff.readlines()
-ff.close()
-for line in lines:
-    already_posted.append(line.replace("\n",""))
+    headers = {"Authorization": "Client-ID xxx"}
 
-i = 0
-valid_files = []
-valid_openings = []
-filenames = get_filenames()
-all_openings = []
-# get valid files to choose from
-for file in filenames:
-    i += 1
-    if i == 1: continue
-    print(i)
-    fulltext = get_text(file)
-    filename = file.replace("index.html", "").replace("chessopeningtheory\\", "")
-    wiki_link = filename.replace("\\", "/")
-    if wiki_link[len(wiki_link) - 1] == "/":
-        wiki_link = wiki_link[:len(wiki_link) - 1]
-        wiki_link = "wiki/Chess_Opening_Theory/" + wiki_link
-    filename = filename.replace("_", " ")
-    opening_line = ""
-    for move in filename.split("\\"):
-        if "..." in move:
-            move = move.split("...")[1]
-        opening_line += move + " "
-    is_valid = False
-    opening_name = None
-    for line in fulltext.split("\n"):
-        if "**" in line and "theory" not in line.lower():
-            if opening_name is None:
-                opening_name = line.replace("**","")
-                opening_name = opening_name.replace("_"," ")
-                if "- " in opening_name and opening_name[0].isnumeric():
-                    opening_name = opening_name.split("- ")[1]
-            continue
-        if "Moves:" in line: continue
-        if len(line) < 1: continue
-        if "parent:" in line.lower(): continue
-        if "eco code:" in line.lower(): continue
-        if "notation" in line.lower(): continue
-        if "moves:" in line.lower(): continue
-        if "**" in line.lower(): continue
-        if "wikipedia" in line.lower(): continue
-        is_valid = True
-    if len(fulltext) < 200: is_valid = False
-    print("---")
-    if file in already_posted: is_valid = False
-    if is_valid or True:
-        if is_valid: valid_files.append(file)
-        opening = Opening()
-        opening.wiki = "https://en.wikibooks.org/" + wiki_link
-        opening.line = opening_line
-        if opening.name != None: opening.name = opening.name.replace("'", "")
-        opening.name = opening_name
-        opening.text = fulltext
-        opening.filename = file
-        #opening_line = "1. b4 e5 2. Bb2 Bxb4"
-        board = chess.Board()
-        for move in opening_line.split(" "):
-            if "." in move: continue
-            if move == "": continue
-            board.push_san(move)
-        fen = board.fen()
-        #opening.lichess = "https://lichess.org/analysis/" + fen.replace(" ", "_")
-        opening.lichess = "https://lichess.org/analysis/pgn/" + opening_line.replace(" ","+")
-        if is_valid: valid_openings.append(opening)
-        all_openings.append(opening)
-    if i > 100000: break
+    api_key = 'xxx'
 
-#weekly_openings = get_weekly_openings(valid_openings)
-#print(weekly_openings)
-#new_weekly_opening(reddit, valid_openings)
-#result = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
-#print(result)
-#result = post_weekly_thread(reddit, valid_openings)
+    url = "https://api.imgur.com/3/upload.json"
 
-while True:
-    print("Posting weekly thread")
-    post_weekly_thread(reddit, all_openings)
-    print("Posting random thread")
-    valid_openings = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
-    time.sleep(60*60*8)
+    j1 = req.post(
+        url,
+        headers=headers,
+        data={
+            'key': api_key,
+            'image': base64.b64encode(open('image.png', 'rb').read()),
+            'type': 'base64',
+            'name': 'chess_opening.jpg',
+            'title': '' + opening
+        }
+    )
+    data = json.loads(j1.text)['data']
+    return data['link']
+
+
+if __name__ == "__main__":
+    #authenticate
+    credentials = 'client_secrets.json'
+    with open(credentials) as f:
+        creds = json.load(f)
+
+    reddit = praw.Reddit(client_id=creds['client_id'],
+                         client_secret=creds['client_secret'],
+                         user_agent=creds['user_agent'],
+                         redirect_uri=creds['redirect_uri'],
+                         refresh_token=creds['refresh_token'])
+    board = chess.Board()
+    already_posted = []
+    ff = open('posted.txt','r')
+    lines = ff.readlines()
+    ff.close()
+    for line in lines:
+        already_posted.append(line.replace("\n",""))
+
+    i = 0
+    valid_files = []
+    valid_openings = []
+    filenames = get_filenames()
+    all_openings = []
+    # get valid files to choose from
+    for file in filenames:
+        i += 1
+        if i == 1: continue
+        print(i)
+        fulltext = get_text(file)
+        filename = file.replace("index.html", "").replace("chessopeningtheory\\", "")
+        wiki_link = filename.replace("\\", "/")
+        if wiki_link[len(wiki_link) - 1] == "/":
+            wiki_link = wiki_link[:len(wiki_link) - 1]
+            wiki_link = "wiki/Chess_Opening_Theory/" + wiki_link
+        filename = filename.replace("_", " ")
+        opening_line = ""
+        for move in filename.split("\\"):
+            if "..." in move:
+                move = move.split("...")[1]
+            opening_line += move + " "
+        is_valid = False
+        opening_name = None
+        actual_len = 0
+        for line in fulltext.split("\n"):
+            if "**" in line and "theory" not in line.lower():
+                if opening_name is None:
+                    opening_name = line.replace("**","")
+                    opening_name = opening_name.replace("_"," ")
+                    if "- " in opening_name and opening_name[0].isnumeric():
+                        opening_name = opening_name.split("- ")[1]
+                continue
+            if "Moves:" in line: continue
+            if len(line) < 1: continue
+            if "parent:" in line.lower(): continue
+            if "eco code:" in line.lower(): continue
+            if "notation" in line.lower(): continue
+            if "moves:" in line.lower(): continue
+            if "**" in line.lower(): continue
+            if "wikipedia" in line.lower(): continue
+            actual_len += len(line)
+            is_valid = True
+        if actual_len < 100: is_valid = False
+        print("---")
+        if file in already_posted: is_valid = False
+        if is_valid or True:
+            if is_valid: valid_files.append(file)
+            opening = Opening()
+            opening.wiki = "https://en.wikibooks.org/" + wiki_link
+            opening.line = opening_line
+            if opening.name != None: opening.name = opening.name.replace("'", "")
+            opening.name = opening_name
+            opening.text = fulltext
+            #print(filename)
+            #sys.exit()
+            #if "1. e4\\1...Nf6\\2. Bc4" in filename:
+                #print(fulltext)
+             #   sys.exit()
+            opening.filename = file
+            #opening_line = "1. b4 e5 2. Bb2 Bxb4"
+            board = chess.Board()
+            for move in opening_line.split(" "):
+                if "." in move: continue
+                if move == "": continue
+                board.push_san(move)
+            fen = board.fen()
+            #opening.lichess = "https://lichess.org/analysis/" + fen.replace(" ", "_")
+            opening.lichess = "https://lichess.org/analysis/pgn/" + opening_line.replace(" ","+")
+            if is_valid: valid_openings.append(opening)
+            all_openings.append(opening)
+        if i > 100000: break
+
+    #weekly_openings = get_weekly_openings(valid_openings)
+    #print(weekly_openings)
+    #new_weekly_opening(reddit, valid_openings)
+    #result = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
+    #print(result)
+    #result = post_weekly_thread(reddit, valid_openings)
+    skip_first = True
+    i = 0
+    while True:
+        i += 1
+        if i > 1 or not skip_first:
+            print("Posting weekly thread")
+            post_weekly_thread(reddit, all_openings)
+            print("Posting random thread")
+            valid_openings = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
+        else:
+            print("Skipping first run")
+        time.sleep(60*60*8)
