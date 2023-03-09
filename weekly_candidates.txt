@@ -1,10 +1,15 @@
-1._c4 72 137006381
-1._d4\1...d5 61 423448879
-1._d4\1...Nf6 86 201519999
-1._e4\1...c5 122 444134109
-1._e4\1...c6 80 151465709
-1._e4\1...e5\2._f4 21 59876466
-1._e4\1...e5\2._Nc3 19 61227244
-1._e4\1...e5\2._Nf3 153 595225255
-1._e4\1...e6 38 245001437
-1._Nf3 27 145746603
+1._e4\1...e5\2._Nf3 (King's Knight Opening) 159 595225255
+1._e4\1...c5 (Sicilian Defense) 92 444134109
+1._e4\1...e5\2._Nf3\2...Nc6 (King's Knight Opening: Normal Variation) 133 371125268
+1._e4\1...e6 (French Defense) 26 245001437
+1._d4\1...Nf6 (Indian Defense) 60 201519999
+1._d4\1...d5\2._c4 (Queen's Gambit) 38 168548480
+1._e4\1...e5\2._Nf3\2...Nc6\3._Bc4 (Italian Game) 39 163849377
+1._e4\1...c6 (Caro-Kann Defense) 45 151465709
+1._c4 (English Opening) 17 137006381
+1._e4\1...e6\2._d4 (French Defense: Normal Variation) 24 115694898
+1._d4\1...Nf6\2._c4 (Indian Defense: Normal Variation) 50 88351169
+1._e4\1...e5\2._Nf3\2...Nc6\3._Bb5 (Ruy Lopez) 79 87031360
+1._e4\1...c5\2._Nf3\2...d6 (Sicilian Defense: Modern Variations) 44 80637806
+1._e4\1...e5\2._Nc3 (Vienna Game) 16 61227244
+1._e4\1...e5\2._f4 (King's Gambit) 29 59876466

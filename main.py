@@ -1,5 +1,6 @@
 import chess
 import chess.svg
+import chess.engine
 import praw
 import json
 import random
@@ -74,9 +75,17 @@ def get_text(file):
             textline = re.sub('<[^<]+?>', '', line)
         if "When contributing to this" in line: continue
         if "Theory_table" in headline or "Theory_Table" in headline or "theory table" in headline.lower() or "Statistics" in headline or "References" in headline: break
-        if "</div></div></div>" in line or "<h1><span id=" in line:
+        if "</div></div></div>" in line or "<h1><span id=" in line or "<a class=\"mw-jump-link\" href=\"#searchInput\">Jump to search</a>" in line:
             started = True
             started_idx = i
+        if "<div id=\"mw-content-text\" lang=\"en\" dir=\"ltr\"" in line and "<b>" in line:
+            headline = line.split("<b>")[1].split("</b>")[0].replace("_"," ")
+            if "Theory_table" in headline or "Theory_Table" in headline or "Statistics" in headline or "References" in headline: break
+            if "Theory_table" in headline or "Theory_Table" in headline or "theory table" in headline.lower() or "Statistics" in headline or "References" in headline: break
+            fulltext += "\n\n**" + headline.replace("\n","").replace("\r","") + "**" + "\n\n"
+            started_idx = i
+            if firstheadline == "":
+                firstheadline = headline
         if "span class=\"mw-headline\"" in line:
             headline = line.split("id=\"")[1].split("\"")[0].replace("_"," ")
             if "Theory_table" in headline or "Theory_Table" in headline or "Statistics" in headline or "References" in headline: break
@@ -90,9 +99,12 @@ def get_text(file):
             #if ("<p><br />" in lastline and headline == "First") or headline != "":
             if "<p>" in line or "</li>" in line or "<dd>" in line:
                 if i - started_idx < 100:
+                    if "Category:" in line:
+                        break
                     if "Contents" not in textline:
                         #if textline.split(" ")[0].replace(".","").isnumeric(): continue
                         fulltext += textline.replace("\n\n","") + "\n"
+
         lastline = line
     return fulltext
 
@@ -136,53 +148,53 @@ def get_historical_games(fen):
         if count == 10: break
     return games_list
 
-#def get_historical_games(eco_code):
-#    if eco_code == '': return None
-    '''
-    resp = req.get("https://chessgames.com/perl/chessopening?eco=" + eco_code, headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-    #print(resp.text)
-    lines = resp.text.split("\n")
-    current_game = Historical_Game()
-    count = 0
-    games_list = []
-    for line in lines:
-        if "<td><font face='verdana,arial,helvetica' size=-1>" in line:
-            if "<td valign=TOP NOWRAP>" not in line:
-                #print(line)
-                players = line.split("<a href=\"/perl/chessgame?gid=")[1].split(">")[1].split("<")[0]
-                url = line.split("<a href=\"")[1].split("\"")[0]
-                #.split(">")[1].split("<")[0]
-                current_game.players = players
-                #print(players)
-                current_game.players = players
-                current_game.url = url
-                #print(line, url)
-            else:
-                result = line.split("<td align=RIGHT NOWRAP><font face='verdana,arial,helvetica' size=-1>")[1].split("<")[0]
-                moves = line.split("<td align=RIGHT><font face='verdana,arial,helvetica' size=-1>")[1].split("<")[0]
-                year = line.split("<td align=RIGHT><font face='verdana,arial,helvetica' size=-1>")[2].split("<")[0]
-                #event = line.split("<td align=RIGHT><font face='verdana,arial,helvetica' size=-1>")[3].split("<")[0]
-                #moves = 0
-      #          print(line)
-                event = ''
-                if "/perl/chess.pl?" in line:
-                    event = line.split("<font size=-2><a href=\"/perl/chess.pl?")[1].split(">")[1].split("<")[0]
-                else:
-                    event = line.split("<font size=-2>")[1].split("<")[0]
-                count += 1
-                result = result.replace("&#189;", "1/2")
-                current_game.result = result
-                current_game.moves = moves
-                current_game.year = year
-                current_game.event = event
-                games_list.append(current_game)
-                current_game = Historical_Game()
-                #print(current_game.url, result, moves, year, event)
-        if count >= 10:
-            break
-    return games_list
-    pass
-    '''
+def update_past_weekly_threads(reddit):
+    subreddit_name = "chessopeningtheory"
+    subreddit = reddit.subreddit(subreddit_name)
+    opening_title = ''
+    out_text = ''
+    opening_id = 0
+    weekly_main_submission = None
+    for submission in subreddit.new(limit=100):
+        title = submission.title
+        id = submission.id
+        pinned = submission.pinned
+        if "This week's opening" in title and submission.stickied:
+            age = time.time() - submission.created
+            if age < 7 * 24 * 60 * 60:
+                started = False
+                for word in title.split(" "):
+                    if word == "1.":
+                        started = True
+                    if started:
+                        opening_title += word + " "
+                opening_title = opening_title.strip()
+                opening_id = id
+                weekly_main_submission = submission
+                break
+    for submission in subreddit.new(limit=100):
+        title = submission.title
+        #id = submission.id
+        #pinned = submission.pinned
+        url = submission.url
+        if opening_title in title and "This week" not in title:
+            out_text += "[" + title + "](" + url + ")\n\n"
+    if weekly_main_submission is not None:
+        text = weekly_main_submission.selftext
+        new_text = ''
+        broken = False
+        for line in text.split("\n\n"):
+            if "This week's posts" in line:
+                broken = True
+                break
+            new_text += line + "\n\n"
+        if not broken: new_text += "---\n\n"
+        new_text += "**This week's posts for " + opening_title + ":**\n\n"
+        for line in out_text.split("\n\n"):
+            new_text += line + "\n\n"
+        result = weekly_main_submission.edit(body=new_text)
+        print(result)
+
 def get_opening_info_lichess(fen):
     # master games
     try:
@@ -230,11 +242,11 @@ def get_weekly_openings(valid_openings):
             #lastline = lastline.replace("\\\\","\\")
             sublines[opening_line].append(lastline)
             lastline = opening_line
+    opening_counts = {}
+    subline_counts = {}
     for key in sublines.keys():
         length = len(sublines[key])
-       # if "2._f4" in key: print(":::", key, length)
         if length > 14:
-            #print("yes!!")
             board = chess.Board()
             for move in key.replace("_", "\\").split("\\"):
                 if "..." in move: move = move.split("...")[1]
@@ -247,8 +259,36 @@ def get_weekly_openings(valid_openings):
             total_games = int(info['white']) + int(info['draws']) + int(info['black'])
             if total_games < 10000: continue
             #if length > 150: continue
-            if key.count("\\") > 4: continue
-            #print(key, length, total_games)
+            if key.count("\\") > 15: continue
+            opening_name = ''
+            ff = open('eco_codes.txt','r')
+            lines = ff.readlines()
+            ff.close()
+            if 'opening' in info and info is not None and info['opening'] is not None:
+                if 'name' in info['opening']:
+                    opening_name = str(info['opening']['name'])
+            opening_counts[key] = total_games
+            subline_counts[key] = length
+    sorted_openings = sorted(opening_counts.items(), key=lambda x: x[1], reverse=True)
+    for opening in sorted_openings:
+        line = opening[0]
+        count = opening[1]
+        opening_name = ''
+        board = chess.Board()
+        for move in line.replace("_", "\\").split("\\"):
+            if "..." in move: move = move.split("...")[1]
+            if "." in move: continue
+            if move == "": continue
+            board.push_san(move)
+        fen = board.fen()
+        info = get_opening_info_lichess_all(fen)
+        time.sleep(.250)
+        if info is not None:
+            if 'opening' in info:
+                if info['opening'] is not None:
+                    if 'name' in info['opening']:
+                        opening_name = str(info['opening']['name'])
+        print(line, "(" + opening_name + ")", subline_counts[line], count)
 
 def new_weekly_opening(reddit, valid_openings):
     ff = open('weekly_candidates.txt','r')
@@ -274,7 +314,6 @@ def new_weekly_opening(reddit, valid_openings):
             if move == "": continue
             board.push_san(move)
         fen = board.fen()
-        #print(fen)
         info = get_opening_info_lichess_all(fen)
         if info is None: continue
         total_moves = int(info['white']) + int(info['draws']) + int(info['black'])
@@ -289,7 +328,6 @@ def new_weekly_opening(reddit, valid_openings):
     i = 0
     top_opening = ''
     for entry in entries:
-        #print("entry.opening", ":", chosen_opening)
         if entry.opening == "\\" + chosen_opening:
             i += 1
             continue
@@ -381,6 +419,23 @@ def post_weekly_thread(reddit, valid_openings):
         new_weekly_opening(reddit, valid_openings)
     pass
 
+def opening_line_to_filename(opening_line):
+    filename = ''
+    i = 0
+    for move in opening_line.split(" "):
+        if move == '': continue
+        if move[0].isnumeric():
+            movenum = int(move.replace(".",""))
+        else:
+            i += 1
+            if i % 2 == 0:
+                filename += str(movenum) + "..." + move + "\\"
+            elif i % 2 == 1:
+                filename += str(movenum) + "._" + move + "\\"
+    filename += "\\index.html"
+    print(filename)
+    return filename
+
 def post_thread(reddit, opening_line, valid_openings, weekly):
     if weekly != "weekly_main" and weekly != "weekly" and weekly != "random": return None
     new_opening_line = ""
@@ -394,7 +449,6 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     found = False
     for opening in valid_openings:
         opening.line = opening.line.strip()
-        #if "1. c4" in opening.line: print(opening.line, opening_line)
         if opening.line == opening_line:
             found = True
             current_opening = opening
@@ -407,7 +461,7 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     # post the thread
     opening = current_opening
     name = opening.name
-    if name == "" or name == None: name = "Unknown"
+    if name == "" or name == None or "mw-" in name or "<" in name: name = "Unknown"
     name = name.replace(".27","'").replace(".2C",":")
     board = chess.Board()
     for move in opening.line.split(" "):
@@ -417,7 +471,6 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     print(opening.line)
     fen = board.fen()
     historical_games = get_historical_games(fen)
-    #print(historical_games)
     hist_display_name = ''
     hist_display_eco = ''
     if len(historical_games) > 0:
@@ -440,9 +493,10 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     subreddit = reddit.subreddit(subr)  # Initialize the subreddit to a variable
 
     title = opening.line
+    if opening.name == None: opening.name = ""
     if opening.name != "" and opening.name != None: title += " (" + name + ")"
     opening.text = opening.text.replace(".27","'").replace(".2C",":")
-    opening.name = opening.name.replace(".27","'").replace(".2C",":")
+    if opening.name != None: opening.name = opening.name.replace(".27","'").replace(".2C",":")
     selftext = ''
     if weekly == "weekly_main":
         selftext += "**This week's opening is " + opening.line + " (" + name + ")**\n\n"
@@ -457,7 +511,6 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
         root_line = lines[0]
         root_line = root_line.replace("_", " ")
         for move in root_line.split("\\"):
-     #       print(move)
             if "..." in move:
                 move = move.split("...")[1]
             new_root_line += move + " "
@@ -467,12 +520,10 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
         root_opening = None
         for loop_opening in valid_openings:
             loop_opening.line = loop_opening.line.strip()
-            # print(opening_line, opening.line)
             if loop_opening.line == root_line:
                 found = True
                 root_opening = loop_opening
                 break
-                # print("Found", opening.wiki)
         if found == None:
             print("Unable to find root ", root_line)
         selftext += "***This is part of this week's series on " + root_opening.name + " (" + root_opening.line + ")***\n\n---\n\n"
@@ -503,9 +554,13 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     black_wins = str(info['black'])
     draws = str(info['draws'])
     tot_games = int(white_wins) + int(black_wins) + int(draws)
-    white_percent = round(int(white_wins) * 100 / int(tot_games),2)
-    black_percent = round(int(black_wins) * 100 / int(tot_games), 2)
-    draws_percent = round(int(draws) * 100 / int(tot_games), 2)
+    white_percent = 0
+    black_percent = 0
+    draws_percent = 0
+    if tot_games > 0:
+        white_percent = round(int(white_wins) * 100 / int(tot_games),2)
+        black_percent = round(int(black_wins) * 100 / int(tot_games), 2)
+        draws_percent = round(int(draws) * 100 / int(tot_games), 2)
     selftext += "Winning percenatages:\n\n"
     selftext += "White: " + str(white_wins) + " (" + str(white_percent) + "%)\n\n"
     selftext += "Black: " + str(black_wins) + " (" + str(black_percent) + "%)\n\n"
@@ -534,31 +589,34 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     #    print(line, actual_len)
         actual_len += len(line)
         is_empty = False
-   # print("---", actual_len, is_empty)
+    print("Len", actual_len, is_empty, len(propertext))
     if actual_len < 100: is_empty = True
     if is_empty:
         selftext = ""
         return None
-    #is_valid = True
-    #for line in propertext.split("\n"):
-        #if "**" in line: is_valid = False
-    #if not is_valid:
-     #   selftext = ""
-      #  continue
-  #  print(propertext)
-    #print(propertext)
     if len(propertext) < 5: return None
     selftext += propertext
     selftext += "\n\n---\n\n"
+    filename = opening_line_to_filename(opening.line)
+    print(filename)
+    responses = get_responses(filename)
+    if responses is None:
+        selftext += "No known responses found"
+    else:
+        selftext += responses
+    selftext += "\n\n---\n\n"
     selftext += historical_game_text
     print(title)
-    #print(selftext)
-    #sys.exit()
+    print(selftext)
+   # sys.exit()
+    print("Posting thread:", title)
     result = subreddit.submit(title, selftext=selftext)
     print(result)
     ff = open('posted.txt', 'a', encoding='utf-8')
     ff.write(opening.filename + "\n")
     ff.close()
+    if weekly == "weekly":
+        update_past_weekly_threads(reddit)
     new_valid_openings = []
     for valid_opening in valid_openings:
         if valid_opening.line == opening.line:
@@ -584,11 +642,11 @@ def get_imgur_link(opening):
         png_image = image.make_blob("png32")
     with open('image.png', "wb") as out:
         out.write(png_image)
-    client_id = 'xxx'
+    client_id = 'c8f4505d33d1b56'
 
-    headers = {"Authorization": "Client-ID xxx"}
+    headers = {"Authorization": "Client-ID c8f4505d33d1b56"}
 
-    api_key = 'xxx'
+    api_key = 'eaaac6fe9b0830eb305093acc66ffa646c7711f3'
 
     url = "https://api.imgur.com/3/upload.json"
 
@@ -606,7 +664,164 @@ def get_imgur_link(opening):
     data = json.loads(j1.text)['data']
     return data['link']
 
+def get_opening_name(filename):
+    ff = open(filename, 'r', encoding='utf-8')
+    lines = ff.readlines()
+    ff.close()
+    name = None
+    for line in lines:
+        #print(line)
+        if "<div id=\"mw-content-text\" lang=\"en\" dir=\"ltr\"" in line and "<b>" in line:
+            name = line.split("<b>")[1].split("</b>")[0].replace("_", " ")
+        if "span class=\"mw-headline\"" in line:
+            name = line.split("id=\"")[1].split("\"")[0].replace("_", " ")
+        if name is not None:
+            name = name.replace(".27", "'").replace(".2C", ":")
+            return name
+    return None
 
+def get_first_two_sentences(filename):
+    name = get_opening_name(filename)
+    text = get_text(filename)
+    realtext = ''
+    for line in text.split("\n"):
+        if line == '': continue
+        if line[0].isnumeric() and line.split(".")[0].isnumeric(): continue
+        if "**" in line: continue
+        realtext += line + "\n"
+    #print(realtext)
+    realtext = realtext.replace("\n"," ")
+    sentences = []
+    sentence = ''
+    #print(realtext)
+    for word in realtext.split(" "):
+        if sentence != '':
+            sentence += ' '
+        sentence += word
+       # print(sentence)
+        if len(word) >= 1 and word[-1] == ".":
+            if word.replace(".","").isnumeric(): continue
+            sentence += ""
+            sentences.append(sentence)
+            sentence = ""
+            if len(sentences) == 2:
+                fulltext = sentences[0] + " " + sentences[1]
+                fulltext = fulltext.replace("\n","")
+                #print(sentences)
+                return fulltext
+    if len(sentences) == 1:
+        fulltext = sentences[0]
+        fulltext = fulltext.replace("\n", "")
+        # print(sentences)
+        return fulltext
+    return ''
+
+def get_responses(filename):
+    directory = filename.replace('\\index.html','')
+    directory = directory.replace("", "\\")
+    fulldir = "chessopeningtheory/" + directory
+   # print(fulldir)
+    current_slashes = directory.count("\\")
+    result = [os.path.join(dp, f) for dp, dn, filenames in os.walk(fulldir) for f in filenames]
+  #  print(result)
+    new_result = []
+    for item in result:
+        #print(item)
+        if "index.html" in item:
+            slashes = item.replace("\\index.html","").count("\\")
+            if slashes == current_slashes - 0: new_result.append(item)
+    filenames = new_result
+    if len(filenames) == 0: return None
+    counts = {}
+    for filename in filenames:
+        opening_line = filename.replace("chessopeningtheory\\","").replace("\\index.html","")
+        board = chess.Board()
+        for move in opening_line.replace("_", "\\").split("\\"):
+            if "..." in move: move = move.split("...")[1]
+            if "." in move: continue
+            if move == "": continue
+            board.push_san(move)
+        fen = board.fen()
+        info = get_opening_info_lichess_all(fen)
+        count = int(info['white']) + int(info['draws']) + int(info['black'])
+        counts[filename] = count
+        pass
+    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    responses = []
+    outtext = "**Most popular responses**\n\n"
+    i = 0
+    for response in sorted_counts:
+        filename = response[0]
+        count = response[1]
+        first_sentences = get_first_two_sentences(filename)
+        name = get_opening_name(filename)
+        namestring = ""
+        if name is not None: namestring = "(" + name + ")"
+        if name is None: namestring = ""
+        opening_line = filename.replace("chessopeningtheory\\", "").replace("\\index.html", "")
+        opening_line = opening_line.replace("_", " ")
+        new_opening_line = ''
+        for move in opening_line.split("\\"):
+            if "..." in move:
+                move = move.split("...")[1]
+            new_opening_line += move + " "
+        opening_line = new_opening_line.strip()
+        last_word = opening_line.split(" ")[-1]
+        last_last_word = opening_line.split(" ")[-2]
+        last_last_last_word = opening_line.split(" ")[-3]
+        response_move = last_word
+        if "." in last_last_word:
+            response_move = last_last_word + " " + response_move
+        else:
+            response_move = last_last_last_word + ".." + response_move
+        response_move = response_move.replace("chessopeningtheory/","")
+        addstring = "* " + response_move + " " + namestring + " " + first_sentences
+        opening_lichess = "https://lichess.org/analysis/pgn/" + opening_line.replace(" ", "+")
+        wiki_link = filename.replace("\\", "/").replace("chessopeningtheory/","").replace("/index.html", "")
+        if wiki_link[len(wiki_link) - 1] == "/":
+            wiki_link = wiki_link[:len(wiki_link) - 1]
+        wiki_link = "wiki/Chess_Opening_Theory/" + wiki_link
+        #print(wiki_link)
+        addstring += " ([Lichess analysis](" + opening_lichess + ")) ([Wikibooks](https://en.wikibooks.org/" + wiki_link + ")) (" + str(count) + " games)"
+        outtext += addstring + "\n\n"
+        addstring = ''
+        i += 1
+        if i >= 5: break
+    return outtext
+    #print(filenames)
+
+def engine_eval(engine, filename, timelimit):
+    key = filename.replace("chessopeningtheory\\", "").replace("\\index.html", "")
+
+    board = chess.Board()
+    for move in key.replace("_", "\\").split("\\"):
+        if "..." in move: move = move.split("...")[1]
+        if "." in move: continue
+        if move == "": continue
+        board.push_san(move)
+    fen = board.fen()
+    with engine.analysis(board, chess.engine.Limit(time=timelimit)) as analysis:
+        for info in analysis:
+            #print(info.get('score'))
+            pass
+    pv = analysis.info['pv'][0]
+    score = analysis.info['score'].relative.score()
+    turn = analysis.info['score'].turn
+    depth = analysis.info['depth']
+    if turn == False: # black
+        score *= -1
+    return score, depth, str(board.san(pv))
+
+#print(get_responses("chessopeningtheory\\1._e4\\1...c5\\index.html"))
+#print(get_first_two_sentences("chessopeningtheory\\1._e4\\1...c5\\2._Nf3\\2...e6\\index.html"))
+#sys.exit()
+
+#responses = get_responses("1._e4\\1...c5\\2._Nf3\\2...Nc6\\index.html")
+#responses = get_responses("1._e4\\1...e5\\2._f4\\2...exf4\\3._Nf3\\3...g5\\4._h4\\4...g4\\5._Ne5\\5...Nf6\\")
+#print(opening_line_to_filename(random.choice(valid_openings).line))
+#score = engine_eval(engine, "chessopeningtheory\\1._e4\\index.html", 10)
+#print(score)
+#sys.exit()
 if __name__ == "__main__":
     #authenticate
     credentials = 'client_secrets.json'
@@ -625,7 +840,6 @@ if __name__ == "__main__":
     ff.close()
     for line in lines:
         already_posted.append(line.replace("\n",""))
-
     i = 0
     valid_files = []
     valid_openings = []
@@ -699,19 +913,22 @@ if __name__ == "__main__":
             all_openings.append(opening)
         if i > 100000: break
 
-    #weekly_openings = get_weekly_openings(valid_openings)
-    #print(weekly_openings)
+
+   # weekly_openings = get_weekly_openings(valid_openings)
     #new_weekly_opening(reddit, valid_openings)
     #result = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
-    #print(result)
     #result = post_weekly_thread(reddit, valid_openings)
     skip_first = True
     i = 0
+   # responses = get_responses("1._e4\\1...c5\\2._Nf3\\2...Nc6\\index.html")
+    #sys.exit()
     while True:
+        print(len(valid_openings), "valid openings")
         i += 1
         if i > 1 or not skip_first:
             print("Posting weekly thread")
             post_weekly_thread(reddit, all_openings)
+            time.sleep(2)
             print("Posting random thread")
             valid_openings = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
         else:
