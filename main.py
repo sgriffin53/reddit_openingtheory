@@ -16,6 +16,12 @@ from wand.api import library
 import wand.color
 import wand.image
 
+class Puzzle:
+    def __init__(self):
+        self.id = ''
+        self.url = ''
+        self.opening = ''
+
 class Opening:
     def __init__(self):
         self.name = ""
@@ -219,6 +225,18 @@ def get_opening_info_lichess_all(fen):
         return None
     pass
 
+def get_analysis_info_lichess(fen):
+    try:
+        url = "https://lichess.org/api/cloud-eval?fen=" + fen
+        #print(url)
+        resp = req.get(url)
+        #print(resp.text)
+        json_data = json.loads(resp.text)
+        #print(json_data)
+        return json_data
+    except:
+        return None
+    pass
 
 def get_weekly_openings(valid_openings):
     sublines = {}
@@ -605,10 +623,30 @@ def post_thread(reddit, opening_line, valid_openings, weekly):
     else:
         selftext += responses
     selftext += "\n\n---\n\n"
+    engine_info = lichess_engine_eval(filename)
+    if engine_info is not None:
+        depth = engine_info[0]
+        score = engine_info[1]
+        score /= 100
+        sign = ''
+        if score > 0: sign = '+'
+        best_move = engine_info[2]
+        pvline = engine_info[3]
+        selftext += "**Engine Evaluation**\n\n"
+        selftext += "Depth: " + str(depth) + "\n\n"
+        selftext += "Score: " + sign + str(score) + "\n\n"
+        selftext += "Best Move: " + str(best_move) + "\n\n"
+        selftext += "PV Line: " + str(pvline) + "\n\n"
+        selftext += "\n\n---\n\n"
+    training_link = get_full_parent_lichess('chessopeningtheory\\' + filename)
+    if training_link is not None:
+        lichess_name = training_link[0]
+        lichess_url = training_link[1]
+        selftext += '**Puzzles based around ' + lichess_name + '**\n\n' + lichess_url
+        selftext += "\n\n---\n\n"
     selftext += historical_game_text
     print(title)
     print(selftext)
-   # sys.exit()
     print("Posting thread:", title)
     result = subreddit.submit(title, selftext=selftext)
     print(result)
@@ -792,7 +830,226 @@ def get_responses(filename):
 
 def engine_eval(engine, filename, timelimit):
     key = filename.replace("chessopeningtheory\\", "").replace("\\index.html", "")
+    board = chess.Board()
+    full_move = 0
+    half_move = 0
+    i = 0
+    opening_line = ''
+    for move in key.replace("_", "\\").split("\\"):
+        if "..." in move: move = move.split("...")[1]
+        if "." in move: continue
+        if move == "": continue
+        board.push_san(move)
+        if i % 2 == 0:
+            full_move += 1
+            opening_line += str(full_move) + ". "
+        else:
+            opening_line += ""
+        opening_line += move + " "
+        half_move += 1
+        i += 1
+    half_move += 1
+    if i % 2 == 0: full_move += 1
+    fen = board.fen()
+    orig_board = chess.Board(fen)
+    with engine.analysis(board, chess.engine.Limit(time=timelimit)) as analysis:
+        for info in analysis:
+            #print(info.get('score'))
+            pass
+    pv = analysis.info['pv'][0]
+    #print("pv", pv)
+    #print(opening_line, orig_board)
+    pvline = analysis.info['pv']
+    full_pv = opening_line
+    full_pv += "**"
+    #half_move += 1
+    for move in pvline:
+        if half_move % 2: # odd
+            full_pv += str(full_move) + ". "
+        else:
+            opening_line += ""
 
+        half_move += 1
+        if half_move % 2: full_move += 1
+        full_pv += str(orig_board.san(move)) + " "
+     #   print(opening_line, move)
+        orig_board.push(move)
+    full_pv = full_pv.strip()
+    full_pv += "**"
+    #print(full_pv)
+
+  #  for
+    score = analysis.info['score'].relative.score()
+    turn = analysis.info['score'].turn
+    depth = analysis.info['depth']
+    if turn == False: # black
+        score *= -1
+    return score, board.san(pv), full_pv, depth
+
+def lichess_engine_eval(filename):
+    key = filename.replace("chessopeningtheory\\", "").replace("\\index.html", "")
+    board = chess.Board()
+    full_move = 0
+    half_move = 0
+    i = 0
+    opening_line = ''
+    for move in key.replace("_", "\\").split("\\"):
+        if "..." in move: move = move.split("...")[1]
+        if "." in move: continue
+        if move == "": continue
+        board.push_san(move)
+        if i % 2 == 0:
+            full_move += 1
+            opening_line += str(full_move) + ". "
+        else:
+            opening_line += ""
+        opening_line += move + " "
+        half_move += 1
+        i += 1
+    half_move += 1
+    if i % 2 == 0: full_move += 1
+    fen = board.fen()
+    print(fen)
+    orig_board = chess.Board(fen)
+    info = get_analysis_info_lichess(fen)
+    if info is None: return None
+    depth = info['depth']
+    score = info['pvs'][0]['cp']
+    best_move = None
+    #print("depth", depth)
+    pv = info['pvs'][0]['moves']
+    pvline = pv.split(' ')
+    print(pvline)
+    full_pv = opening_line
+    full_pv += "**"
+    #half_move += 1
+    i = 0
+    for move in pvline:
+        if half_move % 2: # odd
+            full_pv += str(full_move) + ". "
+        else:
+            opening_line += ""
+        half_move += 1
+        if half_move % 2: full_move += 1
+        print(move)
+        if i == 0: best_move = str(orig_board.san(chess.Move.from_uci(move)))
+        full_pv += str(orig_board.san(chess.Move.from_uci(move))) + " "
+     #   print(opening_line, move)
+        orig_board.push(chess.Move.from_uci(move))
+        i += 1
+    full_pv = full_pv.strip()
+    full_pv += "**"
+    return depth, score, best_move, full_pv
+    #print(opening_line)
+    #print(pvline)
+    #print(full_pv)
+    #print(best_move)
+
+def post_daily_puzzle(reddit, puzzle):
+    subr = 'chessopeningtheory'  # Choose your subreddit
+
+    subreddit = reddit.subreddit(subr)  # Initialize the subreddit to a variable
+
+    title = "[Daily Puzzle] " + puzzle.opening
+    print("Posting thread:", title, puzzle.url)
+    result = subreddit.submit(title, url=puzzle.url)
+    comment_result = result.reply(body='More puzzles based around ' + puzzle.opening + ': https://lichess.org/training/' + puzzle.opening.replace(' ', '_') + '.')
+    print(result)
+    print('comment', comment_result)
+    pass
+
+def get_puzzles():
+    print("Getting puzzles")
+    ff = open('lichess_db_puzzle.csv')
+    lines = ff.readlines()
+    ff.close()
+    puzzles = []
+    i = 0
+    for line in lines:
+        line = line.replace("\n","")
+        #print(line)
+        line_split = line.split(",")
+        #print(len(line_split))
+        opening_name = ''
+        if 'lichess.org' in line_split[-2]:
+            continue
+        opening_name = line_split[-2]
+        opening_name = opening_name.replace("_", " ")
+        id = line_split[0]
+        url = "https://lichess.org/training/" + str(id)
+        cur_puzzle = Puzzle()
+        cur_puzzle.opening = opening_name
+        cur_puzzle.id = id
+        cur_puzzle.url = url
+        puzzles.append(cur_puzzle)
+        i += 1
+        if i >= 1000000000: break
+    return puzzles
+
+def is_opening_valid_lichess(opening_name):
+    opening_name = opening_name.replace(' ', '_')
+    opening_name = opening_name.replace(':', '')
+    opening_name = opening_name.replace(',', '')
+    opening_name = opening_name.replace('\'', '')
+    opening_name = opening_name.strip()
+    #opening_name = opening_name.replace(' ', '_')
+
+    resp = req.get('https://lichess.org/training/' + opening_name)
+    print('https://lichess.org/training/' + opening_name)
+    if opening_name in resp.text or opening_name in resp.text.replace("Defense", "Defence") or opening_name in resp.text.replace("Defence", "Defense"):
+        return 'https://lichess.org/training/' + opening_name
+    else:
+        return False
+    pass
+
+def get_valid_lichess(opening_name):
+    split = opening_name.split(' ')
+    while len(split) > 1:
+        new_opening_name = ''
+        for item in split:
+            new_opening_name += item + ' '
+        new_opening_name = new_opening_name.strip()
+        print(new_opening_name)
+        new_opening_name = new_opening_name.replace(",", "")
+        new_opening_name = new_opening_name.replace(":", "")
+
+        result = is_opening_valid_lichess(new_opening_name)
+        if result:
+            return new_opening_name, result
+        split.pop()
+    return None
+
+def get_parent(filename):
+    directory = filename.replace("\\index.html", "")
+    split = directory.split("\\")
+    split.pop()
+    parent_directory = ''
+    for item in split:
+        parent_directory += item + '\\'
+    parent_file = parent_directory + "index.html"
+    return get_opening_name(parent_file), parent_file
+
+def get_full_parent_lichess(filename):
+    filename = filename.replace("\\\\", "\\")
+    opening_name = get_opening_name(filename).strip()
+    finished = False
+    while not finished:
+        valid = get_valid_lichess(opening_name)
+        if valid is None:
+            opening_name = get_lichess_name(filename)
+            if opening_name is not None:
+                valid = get_valid_lichess(opening_name)
+        print(opening_name, valid)
+        if valid is None:
+            parent = get_parent(filename)
+            opening_name = parent[0].strip()
+            filename = parent[1]
+        else:
+            return valid
+
+def get_lichess_name(filename):
+    filename = filename.replace('\\index.html','').replace('chessopeningtheory\\','')
+    key = filename
     board = chess.Board()
     for move in key.replace("_", "\\").split("\\"):
         if "..." in move: move = move.split("...")[1]
@@ -800,18 +1057,16 @@ def engine_eval(engine, filename, timelimit):
         if move == "": continue
         board.push_san(move)
     fen = board.fen()
-    with engine.analysis(board, chess.engine.Limit(time=timelimit)) as analysis:
-        for info in analysis:
-            #print(info.get('score'))
-            pass
-    pv = analysis.info['pv'][0]
-    score = analysis.info['score'].relative.score()
-    turn = analysis.info['score'].turn
-    depth = analysis.info['depth']
-    if turn == False: # black
-        score *= -1
-    return score, depth, str(board.san(pv))
+    info = get_opening_info_lichess_all(fen)
+    time.sleep(.250)
+    if info is not None:
+        if 'opening' in info:
+            if info['opening'] is not None:
+                if 'name' in info['opening']:
+                    opening_name = str(info['opening']['name'])
+                    return opening_name
 
+#print(get_full_parent_lichess("chessopeningtheory\\1._e4\\1...e5\\2._f4\\2...exf4\\3._Nf3\\3...g5\\4._h4\\4...g4\\5._Ne5\\5...Nf6\\index.html"))
 #print(get_responses("chessopeningtheory\\1._e4\\1...c5\\index.html"))
 #print(get_first_two_sentences("chessopeningtheory\\1._e4\\1...c5\\2._Nf3\\2...e6\\index.html"))
 #sys.exit()
@@ -821,6 +1076,9 @@ def engine_eval(engine, filename, timelimit):
 #print(opening_line_to_filename(random.choice(valid_openings).line))
 #score = engine_eval(engine, "chessopeningtheory\\1._e4\\index.html", 10)
 #print(score)
+#sys.exit()
+#print(get_valid_lichess('Sicilian Defense with 2...Nc6'))
+#lichess_engine_eval('chessopeningtheory\\1._e4\\1...c5\\2._Nf3\\2...e6\\index.html')
 #sys.exit()
 if __name__ == "__main__":
     #authenticate
@@ -833,6 +1091,9 @@ if __name__ == "__main__":
                          user_agent=creds['user_agent'],
                          redirect_uri=creds['redirect_uri'],
                          refresh_token=creds['refresh_token'])
+    puzzles = get_puzzles()
+    # print(puzzles)
+   # sys.exit()
     board = chess.Board()
     already_posted = []
     ff = open('posted.txt','r')
@@ -922,8 +1183,15 @@ if __name__ == "__main__":
     i = 0
    # responses = get_responses("1._e4\\1...c5\\2._Nf3\\2...Nc6\\index.html")
     #sys.exit()
+    time_daily_posted = time.time() - 100000000
+    if skip_first:
+        time_daily_posted = time.time()
     while True:
         print(len(valid_openings), "valid openings")
+        time_since_daily = time.time() - time_daily_posted
+        if time_since_daily > 24 * 60 * 60:
+            print("Posting daily puzzle")
+            post_daily_puzzle(reddit, random.choice(puzzles))
         i += 1
         if i > 1 or not skip_first:
             print("Posting weekly thread")
@@ -933,4 +1201,4 @@ if __name__ == "__main__":
             valid_openings = post_thread(reddit, random.choice(valid_openings).line, valid_openings, "random")
         else:
             print("Skipping first run")
-        time.sleep(60*60*8)
+        time.sleep(60*60*8+20)
